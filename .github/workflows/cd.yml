@@ -129,12 +129,15 @@ jobs:
       fail-fast: false
       matrix:
         arch:
-          - target: x86_64-unknown-linux-musl
+          - target: x86_64-unknown-linux-gnu
             platform: linux/amd64
-          - target: aarch64-unknown-linux-musl # E.g. AWS Graviton
+            packages: ''
+          - target: aarch64-unknown-linux-gnu # E.g. AWS Graviton
             platform: linux/arm64
-          - target: armv7-unknown-linux-musleabihf # E.g. Raspberry Pi
+            packages: 'aarch64-linux-gnu-gcc'
+          - target: armv7-unknown-linux-gnueabihf # E.g. Raspberry Pi
             platform: linux/arm/v7
+            packages: 'arm-linux-gnueabihf-gcc'
           # Requires ring v0.17 which a number of our dependencies don't yet support
           # - target: mips64-unknown-linux-muslabi64 # E.g. UniFi Routers
           #   platform: linux/mips64le
@@ -152,8 +155,11 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           targets: ${{ matrix.arch.target }}
+      - run: apt-get install -y ${{ matrix.arch.packages }}
+        if: matrix.arch.packages != ''
       - name: Build release binaries
         env:
+          RUSTFLAGS: '-C target-feature=+crt-static'
           CARGO_OUTPUT_FILE:
             target/${{ matrix.arch.target }}/release/${{ matrix.name.package }}
         run: |
