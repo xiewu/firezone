@@ -151,17 +151,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rust
         with:
-          targets: aarch64-unknown-linux-musl armv7-unknown-linux-musleabihf
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cross
+          targets: ${{ matrix.arch.target }}
       - name: Build release binaries
         env:
           CARGO_OUTPUT_FILE:
             target/${{ matrix.arch.target }}/release/${{ matrix.name.package }}
         run: |
           dest="$BINARY_DEST_PATH-$VERSION"
-          cross build --release -p ${{ matrix.name.package }} --target ${{ matrix.arch.target }}
+          cargo build --release -p ${{ matrix.name.package }} --target ${{ matrix.arch.target }}
           mv $CARGO_OUTPUT_FILE $dest
           cp $dest ${{ matrix.name.package }}
           sha256sum $dest > $dest.sha256sum.txt
