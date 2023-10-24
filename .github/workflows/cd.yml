@@ -134,10 +134,10 @@ jobs:
             packages: ''
           - target: aarch64-unknown-linux-gnu # E.g. AWS Graviton
             platform: linux/arm64
-            packages: 'aarch64-linux-gnu-gcc'
+            packages: 'gcc-aarch64-linux-gnu'
           - target: armv7-unknown-linux-gnueabihf # E.g. Raspberry Pi
             platform: linux/arm/v7
-            packages: 'arm-linux-gnueabihf-gcc'
+            packages: 'gcc-arm-linux-gnueabihf'
           # Requires ring v0.17 which a number of our dependencies don't yet support
           # - target: mips64-unknown-linux-muslabi64 # E.g. UniFi Routers
           #   platform: linux/mips64le
