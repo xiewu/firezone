@@ -125,6 +125,16 @@ resource "google_sql_database_instance" "master" {
       name  = "cloudsql.iam_authentication"
       value = "on"
     }
+
+    database_flags {
+      name  = "cloudsql.enable_pgaudit"
+      value = "on"
+    }
+
+    database_flags {
+      name  = "pgaudit.log"
+      value = "role,misc_set"
+    }
   }
 
   lifecycle {
