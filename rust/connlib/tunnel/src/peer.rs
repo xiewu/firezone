@@ -271,14 +271,21 @@ impl ClientOnGateway {
         &mut self,
         packet: IpPacket,
         now: Instant,
-    ) -> anyhow::Result<IpPacket> {
+    ) -> anyhow::Result<TranslateOutboundResult> {
+        let dst = packet.destination();
+
         // Packets to the TUN interface don't get transformed.
-        if self.gateway_tun.is_ip(packet.destination()) {
-            return Ok(packet);
+        if self.gateway_tun.is_ip(dst) {
+            return Ok(TranslateOutboundResult::Send(packet));
+        }
+
+        // Packets for CIDR resources / Internet resource are forwarded as is.
+        if !is_dns_addr(dst) {
+            return Ok(TranslateOutboundResult::Send(packet));
         }
 
         let Some(state) = self.permanent_translations.get_mut(&packet.destination()) else {
-            return Ok(packet);
+            return Ok(TranslateOutboundResult::Send(packet));
         };
 
         let (source_protocol, real_ip) =
@@ -295,24 +302,24 @@ impl ClientOnGateway {
             .context("Failed to translate packet to new destination")?;
         packet.update_checksum();
 
-        Ok(packet)
+        Ok(TranslateOutboundResult::Send(packet))
     }
 
     pub fn translate_outbound(
         &mut self,
         packet: IpPacket,
         now: Instant,
-    ) -> anyhow::Result<Option<IpPacket>> {
+    ) -> anyhow::Result<TranslateOutboundResult> {
         // Filtering a packet is not an error.
         if let Err(e) = self.ensure_allowed_src_and_dst(&packet) {
             tracing::debug!(filtered_packet = ?packet, "{e:#}");
-            return Ok(None);
+            return Ok(TranslateOutboundResult::Filtered);
         }
 
         // Failing to transform is an error we want to know about further up.
-        let packet = self.transform_network_to_tun(packet, now)?;
+        let result = self.transform_network_to_tun(packet, now)?;
 
-        Ok(Some(packet))
+        Ok(result)
     }
 
     pub fn translate_inbound(
@@ -432,6 +439,12 @@ impl ClientOnGateway {
     pub fn id(&self) -> ClientId {
         self.id
     }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum TranslateOutboundResult {
+    Send(IpPacket),
+    Filtered,
 }
 
 impl GatewayOnClient {
@@ -638,7 +651,7 @@ mod tests {
 
     use crate::{
         messages::gateway::{Filter, PortRange, ResourceDescription, ResourceDescriptionCidr},
-        peer::nat_table,
+        peer::{nat_table, TranslateOutboundResult},
         IpConfig,
     };
     use chrono::Utc;
@@ -746,14 +759,14 @@ mod tests {
         )
         .unwrap();
 
-        assert!(peer
-            .translate_outbound(request, Instant::now())
-            .unwrap()
-            .is_some());
-        assert!(peer
-            .translate_inbound(response, Instant::now())
-            .unwrap()
-            .is_some());
+        assert!(matches!(
+            peer.translate_outbound(request, Instant::now()).unwrap(),
+            crate::peer::TranslateOutboundResult::Send(_)
+        ));
+        assert!(matches!(
+            peer.translate_outbound(response, Instant::now()).unwrap(),
+            crate::peer::TranslateOutboundResult::Send(_)
+        ));
     }
 
     #[test]
@@ -791,10 +804,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(peer
-            .translate_outbound(pkt, Instant::now())
-            .unwrap()
-            .is_none());
+        assert!(matches!(
+            peer.translate_outbound(pkt, Instant::now()).unwrap(),
+            crate::peer::TranslateOutboundResult::Filtered
+        ));
 
         let pkt = ip_packet::make::udp_packet(
             client_tun_ipv4(),
@@ -805,10 +818,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(peer
-            .translate_outbound(pkt, Instant::now())
-            .unwrap()
-            .is_none());
+        assert!(matches!(
+            peer.translate_outbound(pkt, Instant::now()).unwrap(),
+            crate::peer::TranslateOutboundResult::Filtered
+        ));
 
         let pkt = ip_packet::make::udp_packet(
             client_tun_ipv4(),
@@ -855,10 +868,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(peer
-            .translate_outbound(pkt, Instant::now())
-            .unwrap()
-            .is_none());
+        assert!(matches!(
+            peer.translate_outbound(pkt, Instant::now()).unwrap(),
+            crate::peer::TranslateOutboundResult::Filtered
+        ));
 
         let pkt = ip_packet::make::udp_packet(
             client_tun_ipv4(),
@@ -897,7 +910,10 @@ mod tests {
 
         let mut now = Instant::now();
 
-        assert!(matches!(peer.translate_outbound(request, now), Ok(Some(_))));
+        assert!(matches!(
+            peer.translate_outbound(request, now),
+            Ok(TranslateOutboundResult::Send(_))
+        ));
 
         let response = ip_packet::make::udp_packet(
             foo_real_ip(),
