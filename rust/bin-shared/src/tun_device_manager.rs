@@ -85,7 +85,7 @@ mod tests {
             .unwrap();
 
         // Make a socket.
-        let mut socket = crate::platform::udp_socket_factory(&SocketAddr::V4(SocketAddrV4::new(
+        let socket = crate::platform::udp_socket_factory(&SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::UNSPECIFIED,
             0,
         )))

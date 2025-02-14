@@ -6035,6 +6035,7 @@ dependencies = [
  "firezone-logging",
  "gat-lending-iterator",
  "lockfree-object-pool",
+ "parking_lot",
  "quinn-udp",
  "socket2",
  "tokio",
