@@ -254,6 +254,8 @@ pub(crate) fn run(
         async move {
             let result = ctrl_task.await;
 
+            tracing::debug!(?result, "Controller task finished, exiting Tauri app");
+
             app_handle.exit(0);
 
             result
