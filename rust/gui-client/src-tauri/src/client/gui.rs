@@ -294,19 +294,27 @@ pub(crate) fn run(
         }
     });
 
-    match rt.block_on(ctrl_supervisor) {
-        Err(panic) | Ok(Err(panic)) => {
+    match rt.block_on(tokio::time::timeout(Duration::from_secs(5), ctrl_supervisor)) {
+        Err(_timeout) => {
+            // The controller should be the only one that requests an exit of the app.
+            // If it doesn't stop after the Tauri app has stopped, this is a bug.
+
+            rt.block_on(telemetry.stop_on_crash());
+
+            return Err(anyhow::Error::msg("Controller failed to exit within 5s after OS-eventloop finished"));
+        }
+        Ok(Err(panic) | Ok(Err(panic))) => {
             // The panic will have been recorded already by Sentry's panic hook.
             rt.block_on(telemetry.stop_on_crash());
 
             bail!("Controller panicked: {panic}")
         }
-        Ok(Ok(Err(error))) => {
+        Ok(Ok(Ok(Err(error)))) => {
             rt.block_on(telemetry.stop_on_crash());
 
             return Err(anyhow::Error::new(error));
         }
-        Ok(Ok(Ok(()))) => {
+        Ok(Ok(Ok(Ok(())))) => {
             tracing::info!("Controller exited gracefully");
 
             rt.block_on(telemetry.stop());
