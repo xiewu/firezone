@@ -247,12 +247,14 @@ pub(crate) fn run(
         updates_rx,
     );
 
-    let ctrl_task = rt.spawn({
-        let handle = app.handle().clone();
-        async move {
-            let result = controller.await;
+    let ctrl_task = rt.spawn(controller);
+    let ctrl_supervisor = tokio::spawn({
+        let app_handle = app.handle().clone();
 
-            handle.exit(0); // TODO: Introduce `GuiIntegration::shutdown/exit`.
+        async move {
+            let result = ctrl_task.await;
+
+            app_handle.exit(0);
 
             result
         }
@@ -262,7 +264,9 @@ pub(crate) fn run(
         match event {
             // Don't exit if we close our main window
             // https://tauri.app/v1/guides/features/system-tray/#preventing-the-app-from-closing
-            tauri::RunEvent::ExitRequested { api, code: None, .. } => {
+            tauri::RunEvent::ExitRequested {
+                api, code: None, ..
+            } => {
                 api.prevent_exit();
             }
             tauri::RunEvent::MenuEvent(event) => {
@@ -290,19 +294,19 @@ pub(crate) fn run(
         }
     });
 
-    match rt.block_on(ctrl_task) {
-        Err(panic) => {
+    match rt.block_on(ctrl_supervisor) {
+        Err(panic) | Ok(Err(panic)) => {
             // The panic will have been recorded already by Sentry's panic hook.
             rt.block_on(telemetry.stop_on_crash());
 
             bail!("Controller panicked: {panic}")
         }
-        Ok(Err(error)) => {
+        Ok(Ok(Err(error))) => {
             rt.block_on(telemetry.stop_on_crash());
 
             return Err(anyhow::Error::new(error));
         }
-        Ok(Ok(_)) => {
+        Ok(Ok(Ok(()))) => {
             tracing::info!("Controller exited gracefully");
 
             rt.block_on(telemetry.stop());
