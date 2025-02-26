@@ -1,7 +1,7 @@
 use anyhow::{bail, Context as _, Result};
 use clap::{Args, Parser};
 use firezone_gui_client_common::{
-    self as common, controller::Failure, deep_link, errors, settings::AdvancedSettings
+    self as common, controller::Failure, deep_link, errors, settings::AdvancedSettings,
 };
 use firezone_telemetry::Telemetry;
 use tracing::instrument;
