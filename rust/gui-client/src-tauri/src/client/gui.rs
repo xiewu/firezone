@@ -123,6 +123,8 @@ pub(crate) fn run(
 ) -> Result<()> {
     // Needed for the deep link server
     let rt = tokio::runtime::Runtime::new().context("Couldn't start Tokio runtime")?;
+    tauri::async_runtime::set(rt.handle().clone());
+
     let _guard = rt.enter();
 
     // Make sure we're single-instance
@@ -137,38 +139,6 @@ pub(crate) fn run(
         ctlr_tx: ctlr_tx.clone(),
         inject_faults: cli.inject_faults,
     };
-
-    let app = tauri::Builder::default()
-        .manage(managed)
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Keep the frontend running but just hide this webview
-                // Per https://tauri.app/v1/guides/features/system-tray/#preventing-the-app-from-closing
-                // Closing the window fully seems to deallocate it or something.
-
-                if let Err(e) = window.hide() {
-                    tracing::warn!("Failed to hide window: {}", err_with_src(&e))
-                };
-                api.prevent_close();
-            }
-        })
-        .invoke_handler(tauri::generate_handler![
-            about::get_cargo_version,
-            about::get_git_version,
-            logging::clear_logs,
-            logging::count_logs,
-            logging::export_logs,
-            settings::apply_advanced_settings,
-            settings::reset_advanced_settings,
-            settings::get_advanced_settings,
-            crate::client::welcome::sign_in,
-        ])
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_opener::init())
-        .build(tauri::generate_context!())
-        .context("Failed to build Tauri app instance")?;
 
     // Check for updates
     rt.spawn(async move {
@@ -227,43 +197,82 @@ pub(crate) fn run(
         });
     }
 
-    assert_eq!(
-        firezone_bin_shared::BUNDLE_ID,
-        app.handle().config().identifier,
-        "BUNDLE_ID should match bundle ID in tauri.conf.json"
-    );
+    let (handle_tx, handle_rx) = tokio::sync::oneshot::channel();
 
-    let tray = system_tray::Tray::new(app.handle().clone())?;
-    let integration = TauriIntegration {
-        app: app.handle().clone(),
-        tray,
-    };
-    let controller = Controller::start(
-        ctlr_tx.clone(),
-        integration,
-        ctlr_rx,
-        advanced_settings,
-        reloader,
-        updates_rx,
-    );
+    tauri::Builder::default()
+        .manage(managed)
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Keep the frontend running but just hide this webview
+                // Per https://tauri.app/v1/guides/features/system-tray/#preventing-the-app-from-closing
+                // Closing the window fully seems to deallocate it or something.
 
-    let ctrl_task = rt.spawn(controller);
-    let ctrl_supervisor = tokio::spawn({
-        let app_handle = app.handle().clone();
+                if let Err(e) = window.hide() {
+                    tracing::warn!("Failed to hide window: {}", err_with_src(&e))
+                };
+                api.prevent_close();
+            }
+        })
+        .invoke_handler(tauri::generate_handler![
+            about::get_cargo_version,
+            about::get_git_version,
+            logging::clear_logs,
+            logging::count_logs,
+            logging::export_logs,
+            settings::apply_advanced_settings,
+            settings::reset_advanced_settings,
+            settings::get_advanced_settings,
+            crate::client::welcome::sign_in,
+        ])
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
+        .setup({
+            let ctlr_tx = ctlr_tx.clone();
+            let rt_handle = rt.handle().clone();
 
-        async move {
-            let result = ctrl_task.await;
+            move |app| {
+                assert_eq!(
+                    firezone_bin_shared::BUNDLE_ID,
+                    app.handle().config().identifier,
+                    "BUNDLE_ID should match bundle ID in tauri.conf.json"
+                );
 
-            tracing::debug!(?result, "Controller task finished, exiting Tauri app");
+                let ctrl_task = rt_handle.spawn(Controller::start(
+                    ctlr_tx,
+                    TauriIntegration {
+                        app: app.handle().clone(),
+                        tray: system_tray::Tray::new(app.handle().clone())?,
+                    },
+                    ctlr_rx,
+                    advanced_settings,
+                    reloader,
+                    updates_rx,
+                ));
 
-            app_handle.exit(0);
+                let ctrl_supervisor = rt_handle.spawn({
+                    let app_handle = app.handle().clone();
 
-            result
-        }
-    });
+                    async move {
+                        let result = ctrl_task.await;
 
-    app.run_return(move |_, event| {
-        match event {
+                        tracing::debug!(?result, "Controller task finished, exiting Tauri app");
+
+                        app_handle.exit(0);
+
+                        result
+                    }
+                });
+
+                handle_tx.send(ctrl_supervisor).unwrap();
+
+                Ok(())
+            }
+        })
+        .build(tauri::generate_context!())
+        .context("Failed to build Tauri app instance")?
+        .run_return(move |_, event| match event {
             // Don't exit if we close our main window
             // https://tauri.app/v1/guides/features/system-tray/#preventing-the-app-from-closing
             tauri::RunEvent::ExitRequested {
@@ -293,8 +302,9 @@ pub(crate) fn run(
             | tauri::RunEvent::MainEventsCleared
             | tauri::RunEvent::TrayIconEvent(_)
             | _ => {}
-        }
-    });
+        });
+
+    let ctrl_supervisor = rt.block_on(handle_rx).unwrap();
 
     match rt.block_on(tokio::time::timeout(
         Duration::from_secs(5),
