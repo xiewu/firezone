@@ -129,12 +129,14 @@ fn run_gui(cli: Cli) -> Result<()> {
                 return Err(anyhow);
             }
 
+            // TODO: Get rid of `errors::Error` and check for sources individually like above.
             if let Some(error) = anyhow.root_cause().downcast_ref::<errors::Error>() {
                 common::errors::show_error_dialog(error.user_friendly_msg())?;
+                tracing::error!("GUI failed: {anyhow:#}");
                 return Err(anyhow);
             }
 
-            common::errors::show_error_dialog(anyhow.to_string())?;
+            common::errors::show_error_dialog(format!("{anyhow:#}"))?; // TODO: CHange this to a generic message instead of overloading the user with details.
             tracing::error!("GUI failed: {anyhow:#}");
 
             Err(anyhow)
