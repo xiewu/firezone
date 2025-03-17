@@ -307,12 +307,11 @@ pub(crate) fn run(
             | _ => {}
         });
 
-    let ctrl_supervisor = rt.block_on(handle_rx).unwrap();
+    let ctrl_supervisor = rt
+        .block_on(handle_rx)
+        .context("Failed to complete setup hook")?;
 
-    match rt.block_on(tokio::time::timeout(
-        Duration::from_secs(5),
-        ctrl_supervisor,
-    )) {
+    match rt.block_on(tokio::time::timeout(Duration::from_secs(5), handle_rx)) {
         Err(_timeout) => {
             // The controller should be the only one that requests an exit of the app.
             // If it doesn't stop after the Tauri app has stopped, this is a bug.
