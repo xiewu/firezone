@@ -243,7 +243,8 @@ pub(crate) fn run(
                     ctlr_tx,
                     TauriIntegration {
                         app: app.handle().clone(),
-                        tray: system_tray::Tray::new(app.handle().clone())?,
+                        tray: system_tray::Tray::new(app.handle().clone())
+                            .context("Failed to build tray menu")?,
                     },
                     ctlr_rx,
                     advanced_settings,
@@ -265,7 +266,9 @@ pub(crate) fn run(
                     }
                 });
 
-                handle_tx.send(ctrl_supervisor).unwrap();
+                handle_tx
+                    .send(ctrl_supervisor)
+                    .expect("channel receiver is never dropped");
 
                 Ok(())
             }
